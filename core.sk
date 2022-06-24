@@ -1,0 +1,95 @@
+# Basic script configurations
+#
+# This script facilitates access to Skript's built-in configuration format,
+# by mapping the tree-structure of the file to a variable.
+#
+# Any file respecting Skript's default config structure can be parsed and its
+# contents mapped to a list variable. All previous, non-conflicting elements
+# of the variable are not cleared.
+# A file violating the config structure will fail to be mapped and will not
+# emit any warnings or errors.
+#
+# Mapping is, by default, done asynchronously through all sub-nodes in a recursive manner.
+#
+# Values of entries go through the registered type parsers of the supported types (defined in options below).
+# A value which cannot be parsed fails silently to be added to the resulting list variable.
+# Parsing is done using the 'script' context.
+
+
+# Authored by Mr. Darth. Last updated on 24th June 2022.
+# Tested using Skript 2.6.2, skript-reflect 2.3, Paper 1.18.2
+
+
+
+import:
+    java.io.File
+    ch.njol.skript.config.Config
+    ch.njol.skript.config.SectionNode
+    ch.njol.skript.config.EntryNode
+    ch.njol.skript.lang.ParseContext
+    ch.njol.skript.lang.Variable
+    ch.njol.skript.log.SkriptLogger
+    ch.njol.skript.registrations.Classes
+    ch.njol.skript.variables.Variables
+
+options:
+    # A config's file extension.
+    file-extension: ".skconfig"
+
+    # The key-value separator for entry nodes.
+    # A colon is used by default for parity with Skript's standard format.
+    node-separator: ":"
+
+    # A list of the supported types for config values.
+    # These must be registered to Skript and have an attached parser.
+    supported-types: "java.lang.String", "java.lang.Integer", "java.lang.Double"
+
+# Maps the contents of a config to a list variable.
+# This fails silently for inexistent files or files that violate the format.
+effect load [script] config[uration] %string% into %~objects%:
+    parse:
+        expr-2 is instance of Variable
+        expr-2.isList() is true
+        continue
+    trigger:
+        delay the effect
+
+        set {_path} to expr-1
+        if {_path} does not end with {@file-extension}:
+            set {_path} to join {_path} and {@file-extension}
+        set {_file} to new File({_path})
+
+        stop if {_file}.exists() is false
+
+        # Retains all parsing output.
+        # Can be swapped for a redirecting handler to forward errors to another recipient.
+        # If an error is encountered, the effect exits silently.
+        set {_handler} to SkriptLogger.startRetainingLog()
+
+        set {_config} to new Config({_file}, true, true, {@node-separator})
+        set {_root} to {_config}.getMainNode()
+        {_root}.convertToEntries(-1)
+
+        {_handler}.stop()
+        stop if {_handler}.hasErrors() is true
+
+        set {_variable} to (raw expr-2).getName().getSingle(event)
+        set {_variable} to first (length of {_variable} - 3) characters of {_variable}
+        set {_local} to (raw expr-2).isLocal()
+
+        # This can probably be swapped for a direct replacement of the variable's tree
+        # with the config's tree, but doing it in this fashion simplifies the work of
+        # adding type converters.
+        create new section with {_variable}, {_local}, {_event}, {_node}, {_section} stored in {_section-mapper}:
+            if {_node} is an instance of EntryNode:
+                loop {@supported-types}:
+                    set {_value} to Classes.parseSimple({_node}.getValue(), (class loop-value), ParseContext.SCRIPT)
+                    exit loop if {_value} is set
+                Variables.setVariable({_variable}, {_value}, {_event}, {_local})
+            else if {_node} is an instance of SectionNode:
+                loop ...{_node}:
+                    set {_key} to join {_variable}, (Variable.SEPARATOR), (loop-value.getKey())
+                    run section {_section} with {_key}, {_local}, {_event}, loop-value, {_section} and wait
+
+        run section {_section-mapper} async with {_variable}, {_local}, event, {_root} and {_section-mapper} and wait
+        continue
