@@ -11,9 +11,10 @@
 #
 # Mapping is, by default, done asynchronously through all sub-nodes in a recursive manner.
 #
-# Values of entries go through the registered type parsers of the supported types (defined in options below).
-# A value which cannot be parsed fails silently to be added to the resulting list variable.
-# Parsing is done using the 'script' context.
+# Values of entries go through the registered parsers. A value that cannot be parsed
+# fails to be added to the resulting variable and an error is thrown.
+#
+# User-defined parsers (auxiliary parsers) are stored in a special list variable.
 
 
 
@@ -23,11 +24,14 @@ import:
     ch.njol.skript.config.Config
     ch.njol.skript.config.SectionNode
     ch.njol.skript.config.EntryNode
+    ch.njol.skript.lang.function.Function
     ch.njol.skript.lang.ParseContext
     ch.njol.skript.lang.Variable
     ch.njol.skript.log.SkriptLogger
     ch.njol.skript.registrations.Classes
     ch.njol.skript.variables.Variables
+    com.btk5h.skriptmirror.FunctionWrapper
+    com.btk5h.skriptmirror.skript.reflect.sections.Section
 
 options:
     # A config's file extension.
@@ -38,10 +42,6 @@ options:
     # The key-value separator for entry nodes.
     # A colon is used by default for parity with Skript's standard format.
     node-separator: ":"
-
-    # A list of the supported types for config values.
-    # These must be registered to Skript and have an attached parser.
-    supported-types: "java.lang.String", "java.lang.Integer", "java.lang.Double"
 
     # Whether or not to send loading output (errors, warnings, etc.).
     # This is sent to the console recipient at runtime.
@@ -84,15 +84,18 @@ effect load [script] config[uration] %string% into %~objects%:
         # config's tree, but doing it in this fashion simplifies the work of adding type converters.
         create new section with {_variable}, {_local}, {_event}, {_node}, {_section} stored in {_section-mapper}:
             if {_node} is an instance of EntryNode:
-                loop {@supported-types}:
-                    set {_value} to Classes.parseSimple({_node}.getValue(), (class loop-value), ParseContext.SCRIPT)
-                    exit loop if {_value} is set
-                if {_value} is not set:
+                set {_value::*} to parsed config value ({_node}.getValue())
+                if {_value::*} is not set:
                     if {@show-loading-output} is true:
                         SkriptLogger.setNode({_node})
                         Skript.error("Can't understand the value '%{_node}.getValue()%'")
                 else: # Do not overwrite existing value with null.
-                    Variables.setVariable({_variable}, {_value}, {_event}, {_local})
+                    if size of {_value::*} is 1:
+                        Variables.setVariable({_variable}, {_value::1}, {_event}, {_local})
+                    else:
+                        loop {_value::*}:
+                            set {_key} to join {_variable}, (Variable.SEPARATOR), loop-index
+                            Variables.setVariable({_key}, loop-value, {_event}, {_local})
             else if {_node} is an instance of SectionNode:
                 loop ...{_node}:
                     set {_key} to join {_variable}, (Variable.SEPARATOR), (loop-value.getKey())
@@ -100,3 +103,39 @@ effect load [script] config[uration] %string% into %~objects%:
 
         run section {_section-mapper} async with {_variable}, {_local}, event, {_root} and {_section-mapper} and wait
         continue
+
+# Registers a user-defined parser with the given string identifier.
+# This accepts monadic sections or references to monadic functions.
+#
+# For plain parsers of class infos, it is recommended to use the class info's code name
+# as the string identifier of the auxiliary parser.
+effect register [a] [new] [script] config[uration] [value] %string% parser (with|using) %object%:
+    trigger:
+        stop if expr-2 is not instance of Section, Function or FunctionWrapper
+        set {_parser} to expr-2
+        if {_parser} is an instance of FunctionWrapper:
+            set {_parser} to {_parser}.getFunction() # unwrap
+        set {-.skconfig::parsers::%expr-1%} to {_parser}
+
+
+# Attempts to parse the given input string using the available parsers.
+# This first goes through the default parsers, then through auxiliary ones.
+#
+# Multiple values can be returned and will be mapped with numerical indices starting from 1.
+local plural expression parsed config value %string%:
+    return type: objects
+    get:
+        # Default parsers
+        loop "java.lang.String", "java.lang.Integer", "java.lang.Double", "java.lang.Boolean":
+            set {_result} to Classes.parseSimple(expr-1, (class loop-value), ParseContext.SCRIPT)
+            return {_result} if {_result} is set
+
+        # Auxiliary parsers
+        loop {-.skconfig::parsers::*}:
+            if loop-value is an instance of Function:
+                set {_result::*} to ...loop-value.execute([[expr-1]])
+            else:
+                run section loop-value with expr-1 and store the result in {_result::*}
+            return {_result::*} if {_result::*} is set
+
+        return
