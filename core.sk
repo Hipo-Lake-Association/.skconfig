@@ -196,13 +196,13 @@ effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %strin
                     {_parent}.add({_child})
                     run section {_section} with {_value}, {_tree}, {_child}, {_section} and wait
                 else:
-                    set {_value} to serialised config value {_value}
-                    if {_value} is not set:
+                    set {_serialised-value} to serialised config value {_value}
+                    if {_serialised-value} is not set:
                         if {@show-loading-output} is true:
                             SkriptLogger.setNode(null)
-                            Skript.error("Can't save '%{_node}.getValue()%' in a config because there is no serialiser for it")
+                            Skript.error("Can't save '%{_value}%' in a config because there is no serialiser for it")
                     else:
-                        set {_node} to new EntryNode({_key}, {_value}, {_comment}, {_actual-parent}, -1)
+                        set {_node} to new EntryNode({_key}, {_serialised-value}, {_comment}, {_actual-parent}, -1)
                         {_actual-parent}.add({_node})
 
         run section {_section-mapper} async with {_variable}, null, {_root}, {_section-mapper} and wait
