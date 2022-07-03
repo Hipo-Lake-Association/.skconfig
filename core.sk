@@ -1,7 +1,7 @@
 # Basic script configurations
 #
 # This script facilitates access to Skript's built-in configuration format,
-# by mapping the tree-structure of the file to a variable.
+# by providing special syntaxes to interact with configuration files.
 #
 # Any file respecting Skript's default config structure can be parsed and its
 # contents mapped to a list variable. All previous, non-conflicting elements
@@ -9,24 +9,34 @@
 # A file violating the config structure will fail to be mapped and, by default,
 # output will be sent to the console.
 #
+# A list variable can also be written/mapped to a file. This is done by rebuilding
+# the configuration structure based on the variable's tree.
+#
 # Mapping is, by default, done asynchronously through all sub-nodes in a recursive manner.
 #
-# Values of entries go through the registered parsers. A value that cannot be parsed
-# fails to be added to the resulting variable and an error is thrown.
+# When loading, values of entries go through the registered value handlers. A value that
+# cannot be parsed fails to be added to the resulting variable and an error is thrown.
 #
-# User-defined parsers (auxiliary parsers) are stored in a special list variable.
+# Similarly, when writing, values go through the registered value handlers which will
+# convert the value to a string which can be parsed when loading. If the value cannot be
+# converted, it will not be added to the resulting configuration and an error is thrown.
+#
+# User-defined value handlers (auxiliary value handlers) are stored in a special list variable.
 
 
 
 import:
     java.io.File
+    java.io.PrintWriter
+    java.util.TreeMap
     ch.njol.skript.Skript
     ch.njol.skript.config.Config
-    ch.njol.skript.config.SectionNode
     ch.njol.skript.config.EntryNode
+    ch.njol.skript.config.SectionNode
     ch.njol.skript.lang.function.Function
     ch.njol.skript.lang.ParseContext
     ch.njol.skript.lang.Variable
+    ch.njol.skript.log.BlockingLogHandler
     ch.njol.skript.log.SkriptLogger
     ch.njol.skript.registrations.Classes
     ch.njol.skript.variables.Variables
@@ -40,6 +50,8 @@ options:
     file-extension: ".skconfig"
 
     # The key-value separator for entry nodes.
+    # It is generally not recommended to modify this due to the risk of
+    # breaking compatibility with other scripts/configurations.
     # A colon is used by default for parity with Skript's standard format.
     node-separator: ":"
 
@@ -49,7 +61,7 @@ options:
 
 # Maps the contents of a config to a list variable.
 # This fails for inexistent files or files that violate the format.
-effect load [script] config[uration] %string% into %~objects%:
+effect load [script] config[uration] %string% in[to] %~objects%:
     parse:
         expr-2 is instance of Variable
         expr-2.isList() is true
@@ -101,28 +113,122 @@ effect load [script] config[uration] %string% into %~objects%:
                     set {_key} to join {_variable}, (Variable.SEPARATOR), (loop-value.getKey())
                     run section {_section} with {_key}, {_local}, {_event}, loop-value, {_section} and wait
 
-        run section {_section-mapper} async with {_variable}, {_local}, event, {_root} and {_section-mapper} and wait
+        run section {_section-mapper} async with {_variable}, {_local}, event, {_root}, {_section-mapper} and wait
         continue
 
-# Registers a user-defined parser with the given string identifier.
-# This accepts monadic sections or references to monadic functions.
+# Writes the contents of a list variable to a config file.
+# All previous contents of the file are overwritten.
+# If the file does not exist, a new one is created.
 #
-# For plain parsers of class infos, it is recommended to use the class info's code name
-# as the string identifier of the auxiliary parser.
-effect register [a] [new] [script] config[uration] [value] %string% parser (with|using) %object%:
+# Comments can be added to entry nodes by having a special entry
+# in the list whose key is prefixed with '#'.
+# Comments can be added to section nodes by having a special entry
+# in the list whose key is prefixed with '#>'.
+#
+# For example, the variable structure:
+# ```
+# {config::foo} = "hello"
+# {config::foo::bar} = "world"
+# {config::#foo} = "this is a comment for a key-value node"
+# {config::#>foo} = "this is a comment for a section node"
+# ```
+#
+# produces the configuration:
+# ```
+# foo: # this is a comment for a section node
+#     bar: "world"
+# foo: "hello" # this is a comment for a key-value node
+# ```
+effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %string%:
+    parse:
+        expr-1 is instance of Variable
+        expr-1.isList() is true
+        continue
+    trigger:
+        delay the effect
+
+        set {_path} to expr-2
+        if {_path} does not end with {@file-extension}:
+            set {_path} to join {_path} and {@file-extension}
+        set {_file} to new File({_path})
+
+        # Clear existing contents
+        if {_file}.createNewFile() is false:
+            new PrintWriter({_file}).close()
+
+        # Block empty config warning.
+        set {_handler} to SkriptLogger.startLogHandler(new BlockingLogHandler())
+
+        set {_config} to new Config({_file}, true, true, {@node-separator})
+        set {_root} to {_config}.getMainNode()
+
+        {_handler}.stop()
+
+        set {_variable} to (raw expr-1).getRaw(event)
+
+        create new section with {_tree}, {_old-tree}, {_parent}, {_section} stored in {_section-mapper}:
+            loop ...{_tree}.entrySet():
+                set {_key} to loop-value.getKey()
+                continue loop if {_key} starts with "##"
+
+                set {_value} to loop-value.getValue()
+                set {_is-tree} to true if {_value} is an instance of TreeMap, else false
+                set {_comment-variable-prefix} to "##>" if {_is-tree} is true, else "##"
+
+                if {_key} is not set:
+                    set {_key} to {_parent}.getKey()
+                    set {_actual-parent} to {_parent}.getParent()
+                    set {_comment} to {_old-tree}.get(join {_comment-variable-prefix}, {_key})
+                else:
+                    set {_actual-parent} to {_parent}
+                    set {_comment} to {_tree}.get(join {_comment-variable-prefix}, {_key})
+
+                if {_comment} does not exist:
+                    set {_comment} to ""
+                else:
+                    set {_comment} to join " ## " and {_comment}
+
+                if {_is-tree} is true:
+                    set {_child} to new SectionNode({_key}, {_comment}, {_parent}, 1)
+                    {_parent}.add({_child})
+                    run section {_section} with {_value}, {_tree}, {_child}, {_section} and wait
+                else:
+                    set {_value} to serialised config value {_value}
+                    if {_value} is not set:
+                        if {@show-loading-output} is true:
+                            SkriptLogger.setNode(null)
+                            Skript.error("Can't save '%{_node}.getValue()%' in a config because there is no serialiser for it")
+                    else:
+                        set {_node} to new EntryNode({_key}, {_value}, {_comment}, {_actual-parent}, -1)
+                        {_actual-parent}.add({_node})
+
+        run section {_section-mapper} async with {_variable}, null, {_root}, {_section-mapper} and wait
+        {_config}.save({_file})
+        continue
+
+# Registers a user-defined value handler with the given string identifier.
+# This accepts dyadic sections or references to dyadic functions.
+#
+# The first parameter is the input and the second is a boolean indicating whether the input is
+# to undergo a parsing or deserialisation. A value of 'true' indicates parsing, while 'false'
+# indicates deserialisation.
+#
+# For plain handlers of class infos, it is recommended to use the class info's code name
+# as the string identifier of the auxiliary value handler.
+effect register [a] [new] [script] config[uration] %string% [value] handler (with|using) %object%:
     trigger:
         stop if expr-2 is not instance of Section, Function or FunctionWrapper
-        set {_parser} to expr-2
-        if {_parser} is an instance of FunctionWrapper:
-            set {_parser} to {_parser}.getFunction() # unwrap
-        set {-.skconfig::parsers::%expr-1%} to {_parser}
+        set {_handler} to expr-2
+        if {_handler} is an instance of FunctionWrapper:
+            set {_handler} to {_handler}.getFunction() # unwrap
+        set {-.skconfig::handlers::%expr-1%} to {_handler}
 
 
-# Attempts to parse the given input string using the available parsers.
-# This first goes through the default parsers, then through auxiliary ones.
+# Attempts to parse the given input string using the available value handlers.
+# This first goes through the default handlers, then through auxiliary ones.
 #
 # Multiple values can be returned and will be mapped with numerical indices starting from 1.
-local plural expression parsed config value %string%:
+local plural expression (parsed|deseriali(s|z)ed) config value %string%:
     return type: objects
     get:
         # Default parsers
@@ -131,11 +237,36 @@ local plural expression parsed config value %string%:
             return {_result} if {_result} is set
 
         # Auxiliary parsers
-        loop {-.skconfig::parsers::*}:
+        loop {-.skconfig::handlers::*}:
             if loop-value is an instance of Function:
-                set {_result::*} to ...loop-value.execute([[expr-1]])
+                set {_result::*} to ...loop-value.execute([[expr-1], [true]])
             else:
-                run section loop-value with expr-1 and store the result in {_result::*}
+                run section loop-value with expr-1, true and store the result in {_result::*}
+            return {_result::*} if {_result::*} is set
+
+        return
+
+# Attempts, using the available value handlers, to convert the given object to
+# a string that can be saved to a configuration and later parsed back.
+#
+# This first goes through the default handlers, then through auxiliary ones.
+#
+# Multiple values can be provided and a single string will be returned.
+local expression seriali(s|z)ed config value %objects%:
+    return type: string
+    get:
+        # Default serialisers
+        if size of exprs-1 is 1:
+            set {_value} to first element of exprs-1
+            return """%{_value}%""" if {_value} is a text
+            return "%{_value}%" if {_value} is a number or a boolean
+
+        # Auxiliary serialisers
+        loop {-.skconfig::handlers::*}:
+            if loop-value is an instance of Function:
+                set {_result::*} to ...loop-value.execute([[exprs-1], [false]])
+            else:
+                run section loop-value with (exprs-1), false and store the result in {_result::*}
             return {_result::*} if {_result::*} is set
 
         return
