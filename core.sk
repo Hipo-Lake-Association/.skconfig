@@ -59,6 +59,9 @@ options:
     # This is sent to the console recipient at runtime.
     show-loading-output: true
 
+    # The variable in which to store auxiliary value handlers.
+    handler-storage: -.skconfig::handlers
+
 # Maps the contents of a config to a list variable.
 # This fails for inexistent files or files that violate the format.
 effect load [script] config[uration] %string% in[to] %~objects%:
@@ -152,7 +155,7 @@ effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %strin
             set {_path} to join {_path} and {@file-extension}
         set {_file} to new File({_path})
 
-        # Clear existing contents
+        # Clear existing contents.
         if {_file}.createNewFile() is false:
             new PrintWriter({_file}).close()
 
@@ -221,7 +224,7 @@ effect register [a] [new] [script] config[uration] %string% [value] handler (wit
         set {_handler} to expr-2
         if {_handler} is an instance of FunctionWrapper:
             set {_handler} to {_handler}.getFunction() # unwrap
-        set {-.skconfig::handlers::%expr-1%} to {_handler}
+        set {{@handler-storage}::handlers::%expr-1%} to {_handler}
 
 
 # Attempts to parse the given input string using the available value handlers.
@@ -237,7 +240,7 @@ local plural expression (parsed|deseriali(s|z)ed) config value %string%:
             return {_result} if {_result} is set
 
         # Auxiliary parsers
-        loop {-.skconfig::handlers::*}:
+        loop {{@handler-storage}::*}:
             if loop-value is an instance of Function:
                 set {_result::*} to ...loop-value.execute([[expr-1], [true]])
             else:
@@ -262,7 +265,7 @@ local expression seriali(s|z)ed config value %objects%:
             return "%{_value}%" if {_value} is a number or a boolean
 
         # Auxiliary serialisers
-        loop {-.skconfig::handlers::*}:
+        loop {{@handler-storage}::*}:
             if loop-value is an instance of Function:
                 set {_result::*} to ...loop-value.execute([[exprs-1], [false]])
             else:
