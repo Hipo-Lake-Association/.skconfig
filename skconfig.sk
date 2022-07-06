@@ -60,6 +60,53 @@ options:
     # The variable in which to store auxiliary value handlers.
     handler-storage: -.skconfig::handlers
 
+# Attempts to parse the given input string using the available value handlers.
+# This first goes through the default handlers, then through auxiliary ones.
+#
+# Multiple values can be returned and will be mapped with numerical indices starting from 1.
+local plural expression (parsed|deseriali(s|z)ed) config value %string%:
+    return type: objects
+    get:
+        # Default parsers
+        loop "java.lang.String", "java.lang.Integer", "java.lang.Double", "java.lang.Boolean":
+            set {_result} to Classes.parseSimple(expr-1, (class loop-value), ParseContext.SCRIPT)
+            return {_result} if {_result} is set
+
+        # Auxiliary parsers
+        loop {{@handler-storage}::*}:
+            if loop-value is an instance of Function:
+                set {_result::*} to ...loop-value.execute([[expr-1], [true]])
+            else:
+                run section loop-value with expr-1, true and store the result in {_result::*}
+            return {_result::*} if {_result::*} is set
+
+        return
+
+# Attempts, using the available value handlers, to convert the given object to
+# a string that can be saved to a configuration and later parsed back.
+#
+# This first goes through the default handlers, then through auxiliary ones.
+#
+# Multiple values can be provided and a single string will be returned.
+local expression seriali(s|z)ed config value %objects%:
+    return type: string
+    get:
+        # Default serialisers
+        if size of exprs-1 is 1:
+            set {_value} to first element of exprs-1
+            return """%{_value}%""" if {_value} is a text
+            return "%{_value}%" if {_value} is a number or a boolean
+
+        # Auxiliary serialisers
+        loop {{@handler-storage}::*}:
+            if loop-value is an instance of Function:
+                set {_result::*} to ...loop-value.execute([[exprs-1], [false]])
+            else:
+                run section loop-value with (exprs-1), false and store the result in {_result::*}
+            return {_result::*} if {_result::*} is set
+
+        return
+
 # Maps the contents of a config to a list variable.
 # This fails for inexistent files or files that violate the format.
 effect load [script] config[uration] %string% in[to] %~objects%:
@@ -223,51 +270,3 @@ effect register [a] [new] [script] config[uration] %string% [value] handler (wit
         if {_handler} is an instance of FunctionWrapper:
             set {_handler} to {_handler}.getFunction() # unwrap
         set {{@handler-storage}::handlers::%expr-1%} to {_handler}
-
-
-# Attempts to parse the given input string using the available value handlers.
-# This first goes through the default handlers, then through auxiliary ones.
-#
-# Multiple values can be returned and will be mapped with numerical indices starting from 1.
-local plural expression (parsed|deseriali(s|z)ed) config value %string%:
-    return type: objects
-    get:
-        # Default parsers
-        loop "java.lang.String", "java.lang.Integer", "java.lang.Double", "java.lang.Boolean":
-            set {_result} to Classes.parseSimple(expr-1, (class loop-value), ParseContext.SCRIPT)
-            return {_result} if {_result} is set
-
-        # Auxiliary parsers
-        loop {{@handler-storage}::*}:
-            if loop-value is an instance of Function:
-                set {_result::*} to ...loop-value.execute([[expr-1], [true]])
-            else:
-                run section loop-value with expr-1, true and store the result in {_result::*}
-            return {_result::*} if {_result::*} is set
-
-        return
-
-# Attempts, using the available value handlers, to convert the given object to
-# a string that can be saved to a configuration and later parsed back.
-#
-# This first goes through the default handlers, then through auxiliary ones.
-#
-# Multiple values can be provided and a single string will be returned.
-local expression seriali(s|z)ed config value %objects%:
-    return type: string
-    get:
-        # Default serialisers
-        if size of exprs-1 is 1:
-            set {_value} to first element of exprs-1
-            return """%{_value}%""" if {_value} is a text
-            return "%{_value}%" if {_value} is a number or a boolean
-
-        # Auxiliary serialisers
-        loop {{@handler-storage}::*}:
-            if loop-value is an instance of Function:
-                set {_result::*} to ...loop-value.execute([[exprs-1], [false]])
-            else:
-                run section loop-value with (exprs-1), false and store the result in {_result::*}
-            return {_result::*} if {_result::*} is set
-
-        return
