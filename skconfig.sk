@@ -12,18 +12,20 @@
 #
 # Mapping is, by default, done asynchronously through all sub-nodes in a recursive manner.
 #
-# When loading, values of entries go through the registered value handlers. A value that
-# cannot be parsed fails to be added to the resulting variable and an error is thrown.
+# When loading, values of entries go through the registered value handlers of the current script.
+# A value that cannot be parsed fails to be added to the resulting variable and an error is thrown.
 #
-# Similarly, when writing, values go through the registered value handlers which will
-# convert the value to a string which can be parsed when loading. If the value cannot be
+# Similarly, when writing, values go through the registered value handlers of the current script
+# which will convert the value to a string which can be parsed when loading. If the value cannot be
 # converted, it will not be added to the resulting configuration and an error is thrown.
 #
-# User-defined value handlers (auxiliary value handlers) are stored in a special list variable.
+# User-defined value handlers (auxiliary value handlers) are stored in a special list variable
+# defined below and are different for each individual script.
 
 
 
 import:
+    java.lang.reflect.Array
     java.io.File
     java.io.PrintWriter
     java.util.TreeMap
@@ -34,6 +36,7 @@ import:
     ch.njol.skript.lang.function.Function
     ch.njol.skript.lang.ParseContext
     ch.njol.skript.lang.Variable
+    ch.njol.skript.lang.parser.ParserInstance
     ch.njol.skript.log.BlockingLogHandler
     ch.njol.skript.log.SkriptLogger
     ch.njol.skript.registrations.Classes
@@ -60,11 +63,11 @@ options:
     # The variable in which to store auxiliary value handlers.
     handler-storage: -.skconfig::handlers
 
-# Attempts to parse the given input string using the available value handlers.
-# This first goes through the default handlers, then through auxiliary ones.
+# Attempts to parse the given input string using the given value handlers.
+# This first goes through the default handlers, then through the provided ones.
 #
 # Multiple values can be returned and will be mapped with numerical indices starting from 1.
-local plural expression (parsed|deseriali(s|z)ed) config value %string%:
+local plural expression (parsed|deseriali(s|z)ed) config value %string% [(with|using) [value] handlers %-objects%]:
     return type: objects
     get:
         # Default parsers
@@ -73,22 +76,28 @@ local plural expression (parsed|deseriali(s|z)ed) config value %string%:
             return {_result} if {_result} is set
 
         # Auxiliary parsers
-        loop {{@handler-storage}::*}:
-            if loop-value is an instance of Function:
-                set {_result::*} to ...loop-value.execute([[expr-1], [true]])
+        loop exprs-2:
+            set {_handler} to loop-value
+            if {_handler} is an instance of Function:
+                # Multidimensional array workaround
+                set {_args} to Array.newInstance(Object.class, 2, 1)
+                Array.set({_args}, 0, [expr-1])
+                Array.set({_args}, 1, [true])
+
+                set {_result::*} to ...{_handler}.execute({_args})
             else:
-                run section loop-value with expr-1, true and store the result in {_result::*}
+                run section {_handler} with expr-1, true and store the result in {_result::*}
             return {_result::*} if {_result::*} is set
 
         return
 
-# Attempts, using the available value handlers, to convert the given object to
+# Attempts, using the given value handlers, to convert the given object to
 # a string that can be saved to a configuration and later parsed back.
 #
-# This first goes through the default handlers, then through auxiliary ones.
+# This first goes through the default handlers, then through the provided ones.
 #
 # Multiple values can be provided and a single string will be returned.
-local expression seriali(s|z)ed config value %objects%:
+local expression seriali(s|z)ed config value %objects% [(with|using) [value] handlers %-objects%]:
     return type: string
     get:
         # Default serialisers
@@ -98,21 +107,57 @@ local expression seriali(s|z)ed config value %objects%:
             return "%{_value}%" if {_value} is a number or a boolean
 
         # Auxiliary serialisers
-        loop {{@handler-storage}::*}:
-            if loop-value is an instance of Function:
-                set {_result::*} to ...loop-value.execute([[exprs-1], [false]])
+        loop exprs-2:
+            set {_handler} to loop-value
+            if {_handler} is an instance of Function:
+                # Multidimensional array workaround
+                set {_args} to Array.newInstance(Object.class, 2, (size of exprs-1))
+                Array.set({_args}, 0, [exprs-1])
+                Array.set({_args}, 1, [false])
+
+                set {_result::*} to ...{_handler}.execute({_args})
             else:
-                run section loop-value with (exprs-1), false and store the result in {_result::*}
+                run section {_handler} with exprs-1, false and store the result in {_result::*}
             return {_result::*} if {_result::*} is set
 
         return
 
+# Returns the available value handlers of a given script.
+plural expression [config[uration]] [value] handlers (from|of|for) script[s] %strings%:
+    return type: objects
+    parse:
+        set {_skript-data-folder} to Skript.getInstance().getDataFolder()
+        set {_scripts-folder} to Skript.SCRIPTSFOLDER
+        continue
+    get:
+        loop exprs-1:
+            set {_script} to loop-value
+            if {_script} does not end with ".sk":
+                set {_script} to join {_script} and ".sk"
+
+            set {_script} to join {_scripts-folder}, File.separator, {_script}
+
+            set {_file} to new File({_skript-data-folder}, {_script})
+            return if {_file}.exists() is false
+
+            # Madness a la Skript
+            set {_path} to {_skript-data-folder}.toPath().toAbsolutePath().resolve({_scripts-folder}).relativize({_file}.toPath().toAbsolutePath()).toString()
+
+            loop {{@handler-storage}::%{_path}%::*}:
+                add 1 to {_index}
+                set {_handlers::%{_index}%} to loop-value-2
+        return {_handlers::*}
+
 # Maps the contents of a config to a list variable.
 # This fails for inexistent files or files that violate the format.
-effect load [script] config[uration] %string% in[to] %~objects%:
+#
+# An optional list of value handlers can be provided to use for parsing.
+# If none are provided, the handlers of the current script will be used.
+effect load [script] config[uration] %string% in[to] %~objects% [(with|using) [value] handlers %-objects%]:
     parse:
         expr-2 is instance of Variable
         expr-2.isList() is true
+        set {_script} to ParserInstance.get().getCurrentScript().getFileName()
         continue
     trigger:
         delay the effect
@@ -142,9 +187,9 @@ effect load [script] config[uration] %string% in[to] %~objects%:
 
         # This can probably be swapped for a direct replacement of the variable's tree with the
         # config's tree, but doing it in this fashion simplifies the work of adding type converters.
-        create new section with {_variable}, {_local}, {_event}, {_node}, {_section} stored in {_section-mapper}:
+        create new section with {_variable}, {_local}, {_event}, {_node}, {_handlers::*}, {_section} stored in {_section-mapper}:
             if {_node} is an instance of EntryNode:
-                set {_value::*} to parsed config value ({_node}.getValue())
+                set {_value::*} to parsed config value ({_node}.getValue()) using handlers {_handlers::*}
                 if {_value::*} is not set:
                     if {@show-loading-output} is true:
                         SkriptLogger.setNode({_node})
@@ -159,14 +204,22 @@ effect load [script] config[uration] %string% in[to] %~objects%:
             else if {_node} is an instance of SectionNode:
                 loop ...{_node}:
                     set {_key} to join {_variable}, (Variable.SEPARATOR), (loop-value.getKey())
-                    run section {_section} with {_key}, {_local}, {_event}, loop-value, {_section} and wait
+                    run section {_section} with {_key}, {_local}, {_event}, loop-value, {_handlers::*}, {_section} and wait
 
-        run section {_section-mapper} async with {_variable}, {_local}, event, {_root}, {_section-mapper} and wait
+        if exprs-3 is set:
+            set {_script-handlers::*} to exprs-3
+        else:
+            set {_script-handlers::*} to value handlers of script {_script}
+
+        run section {_section-mapper} async with {_variable}, {_local}, event, {_root}, {_script-handlers::*}, {_section-mapper} and wait
         continue
 
 # Writes the contents of a list variable to a config file.
 # All previous contents of the file are overwritten.
 # If the file does not exist, a new one is created.
+#
+# An optional list of value handlers can be provided to use for serialising.
+# If none are provided, the handlers of the current script will be used.
 #
 # Comments can be added to entry nodes by having a special entry
 # in the list whose key is prefixed with '#'.
@@ -187,10 +240,11 @@ effect load [script] config[uration] %string% in[to] %~objects%:
 #     bar: "world"
 # foo: "hello" # this is a comment for a key-value node
 # ```
-effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %string%:
+effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %string% [(with|using) [value] handlers %-objects%]:
     parse:
         expr-1 is instance of Variable
         expr-1.isList() is true
+        set {_script} to ParserInstance.get().getCurrentScript().getFileName()
         continue
     trigger:
         delay the effect
@@ -214,7 +268,7 @@ effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %strin
 
         set {_variable} to (raw expr-1).getRaw(event)
 
-        create new section with {_tree}, {_old-tree}, {_parent}, {_section} stored in {_section-mapper}:
+        create new section with {_tree}, {_old-tree}, {_parent}, {_handlers::*}, {_section} stored in {_section-mapper}:
             loop ...{_tree}.entrySet():
                 set {_key} to loop-value.getKey()
                 continue loop if {_key} starts with "##"
@@ -239,9 +293,9 @@ effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %strin
                 if {_is-tree} is true:
                     set {_child} to new SectionNode({_key}, {_comment}, {_parent}, 1)
                     {_parent}.add({_child})
-                    run section {_section} with {_value}, {_tree}, {_child}, {_section} and wait
+                    run section {_section} with {_value}, {_tree}, {_child}, {_handlers::*}, {_section} and wait
                 else:
-                    set {_serialised-value} to serialised config value {_value}
+                    set {_serialised-value} to serialised config value {_value} using handlers {_handlers::*}
                     if {_serialised-value} is not set:
                         if {@show-loading-output} is true:
                             SkriptLogger.setNode(null)
@@ -250,12 +304,20 @@ effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %strin
                         set {_node} to new EntryNode({_key}, {_serialised-value}, {_comment}, {_actual-parent}, -1)
                         {_actual-parent}.add({_node})
 
-        run section {_section-mapper} async with {_variable}, null, {_root}, {_section-mapper} and wait
+        if exprs-3 is set:
+            set {_script-handlers::*} to exprs-3
+        else:
+            set {_script-handlers::*} to value handlers of script {_script}
+
+        run section {_section-mapper} async with {_variable}, null, {_root}, {_script-handlers::*}, {_section-mapper} and wait
         {_config}.save({_file})
         continue
 
 # Registers a user-defined value handler with the given string identifier.
 # This accepts dyadic sections or references to dyadic functions.
+#
+# The value handler is typically local to the script, but may be accessed by
+# other scripts using special syntax.
 #
 # The first parameter is the input and the second is a boolean indicating whether the input is
 # to undergo a parsing or deserialisation. A value of 'true' indicates parsing, while 'false'
@@ -264,9 +326,12 @@ effect (write|map) [script] config[uration] %~objects% (to|in[to]) [file] %strin
 # For plain handlers of class infos, it is recommended to use the class info's code name
 # as the string identifier of the auxiliary value handler.
 effect register [a] [new] [script] config[uration] %string% [value] handler (with|using) %object%:
+    parse:
+        set {_script} to ParserInstance.get().getCurrentScript().getFileName()
+        continue
     trigger:
         stop if expr-2 is not instance of Section, Function or FunctionWrapper
         set {_handler} to expr-2
         if {_handler} is an instance of FunctionWrapper:
             set {_handler} to {_handler}.getFunction() # unwrap
-        set {{@handler-storage}::handlers::%expr-1%} to {_handler}
+        set {{@handler-storage}::%{_script}%::%expr-1%} to {_handler}
