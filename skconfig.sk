@@ -65,10 +65,8 @@ options:
 
 # Attempts to parse the given input string using the given value handlers.
 # This first goes through the default handlers, then through the provided ones.
-#
-# Multiple values can be returned and will be mapped with numerical indices starting from 1.
-local plural expression (parsed|deseriali(s|z)ed) config value %string% [(with|using) [value] handlers %-objects%]:
-    return type: objects
+local expression (parsed|deseriali(s|z)ed) config value %string% [(with|using) [value] handlers %-objects%]:
+    return type: object
     get:
         # Default parsers
         loop "java.lang.String", "java.lang.Integer", "java.lang.Double", "java.lang.Boolean":
@@ -84,10 +82,10 @@ local plural expression (parsed|deseriali(s|z)ed) config value %string% [(with|u
                 Array.set({_args}, 0, [expr-1])
                 Array.set({_args}, 1, [true])
 
-                set {_result::*} to ...{_handler}.execute({_args})
+                set {_result} to {_handler}.execute({_args})[0]
             else:
-                run section {_handler} with expr-1, true and store the result in {_result::*}
-            return {_result::*} if {_result::*} is set
+                run section {_handler} with expr-1, true and store the result in {_result}
+            return {_result} if {_result} is set
 
         return
 
@@ -95,9 +93,7 @@ local plural expression (parsed|deseriali(s|z)ed) config value %string% [(with|u
 # a string that can be saved to a configuration and later parsed back.
 #
 # This first goes through the default handlers, then through the provided ones.
-#
-# Multiple values can be provided and a single string will be returned.
-local expression seriali(s|z)ed config value %objects% [(with|using) [value] handlers %-objects%]:
+local expression seriali(s|z)ed config value %object% [(with|using) [value] handlers %-objects%]:
     return type: string
     get:
         # Default serialisers
@@ -115,10 +111,10 @@ local expression seriali(s|z)ed config value %objects% [(with|using) [value] han
                 Array.set({_args}, 0, [exprs-1])
                 Array.set({_args}, 1, [false])
 
-                set {_result::*} to ...{_handler}.execute({_args})
+                set {_result} to {_handler}.execute({_args})[0]
             else:
-                run section {_handler} with exprs-1, false and store the result in {_result::*}
-            return {_result::*} if {_result::*} is set
+                run section {_handler} with exprs-1, false and store the result in {_result}
+            return {_result} if {_result} is set
 
         return
 
@@ -174,6 +170,7 @@ effect load [script] config[uration] %string% in[to] %~objects% [(with|using) [v
 
         set {_config} to new Config({_file}, true, true, {@node-separator})
         set {_root} to {_config}.getMainNode()
+
         {_root}.convertToEntries(-1)
 
         {_handler}.stop()
@@ -189,18 +186,13 @@ effect load [script] config[uration] %string% in[to] %~objects% [(with|using) [v
         # config's tree, but doing it in this fashion simplifies the work of adding type converters.
         create new section with {_variable}, {_local}, {_event}, {_node}, {_handlers::*}, {_section} stored in {_section-mapper}:
             if {_node} is an instance of EntryNode:
-                set {_value::*} to parsed config value ({_node}.getValue()) using handlers {_handlers::*}
-                if {_value::*} is not set:
+                set {_value} to parsed config value ({_node}.getValue()) using handlers {_handlers::*}
+                if {_value} is not set:
                     if {@show-loading-output} is true:
                         SkriptLogger.setNode({_node})
                         Skript.error("Can't understand the value '%{_node}.getValue()%'")
                 else: # Do not overwrite existing value with null.
-                    if size of {_value::*} is 1:
-                        Variables.setVariable({_variable}, {_value::1}, {_event}, {_local})
-                    else:
-                        loop {_value::*}:
-                            set {_key} to join {_variable}, (Variable.SEPARATOR), loop-index
-                            Variables.setVariable({_key}, loop-value, {_event}, {_local})
+                    Variables.setVariable({_variable}, {_value}, {_event}, {_local})
             else if {_node} is an instance of SectionNode:
                 loop ...{_node}:
                     set {_key} to join {_variable}, (Variable.SEPARATOR), (loop-value.getKey())
