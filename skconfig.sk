@@ -71,7 +71,12 @@ local expression (parsed|deseriali(s|z)ed) config value %string% [(with|using) [
         # Default parsers
         loop "java.lang.String", "java.lang.Integer", "java.lang.Double", "java.lang.Boolean":
             set {_result} to Classes.parseSimple(expr-1, (class loop-value), ParseContext.SCRIPT)
-            return {_result} if {_result} is set
+            continue if {_result} is not set
+
+            if loop-value is "java.lang.String":
+                set {_result} to {_result}.replaceAll("(?<!\\)%%nl%%", newline)
+
+            return {_result}
 
         # Auxiliary parsers
         loop exprs-2:
@@ -99,7 +104,11 @@ local expression seriali(s|z)ed config value %object% [(with|using) [value] hand
         # Default serialisers
         if size of exprs-1 is 1:
             set {_value} to first element of exprs-1
-            return """%{_value}%""" if {_value} is a text
+
+            if {_value} is a text:
+                replace all newline in {_value} with "%%nl%%"
+                return """%{_value}%"""
+
             return "%{_value}%" if {_value} is a number or a boolean
 
         # Auxiliary serialisers
