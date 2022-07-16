@@ -172,7 +172,7 @@ effect load [script] config[uration] %string% in[to] %~objects% [(with|using) [v
             set {_path} to join {_path} and {@file-extension}
         set {_file} to new File({_path})
 
-        stop if {_file}.exists() is false
+        continue if {_file}.exists() is false
 
         # Retains all parsing output and prints it only if required to do so.
         set {_handler} to SkriptLogger.startRetainingLog()
@@ -185,7 +185,7 @@ effect load [script] config[uration] %string% in[to] %~objects% [(with|using) [v
         {_handler}.stop()
 
         {_handler}.printErrors() if {@show-loading-output} is true
-        stop if {_handler}.hasErrors() is true
+        continue if {_handler}.hasErrors() is true
 
         set {_variable} to (raw expr-2).getName().getSingle(event)
         set {_variable} to first (length of {_variable} - 3) characters of {_variable}
