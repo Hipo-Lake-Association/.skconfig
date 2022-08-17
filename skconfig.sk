@@ -102,27 +102,26 @@ local expression seriali(s|z)ed config value %object% [(with|using) [value] hand
     return type: string
     get:
         # Default serialisers
-        if size of exprs-1 is 1:
-            set {_value} to first element of exprs-1
+        set {_value} to first element of expr-1
 
-            if {_value} is a text:
-                replace all newline in {_value} with "%%nl%%"
-                return """%{_value}%"""
+        if {_value} is a text:
+            replace all newline in {_value} with "%%nl%%"
+            return """%{_value}%"""
 
-            return "%{_value}%" if {_value} is a number or a boolean
+        return "%{_value}%" if {_value} is a number or a boolean
 
         # Auxiliary serialisers
         loop exprs-2:
             set {_handler} to loop-value
             if {_handler} is an instance of Function:
                 # Multidimensional array workaround
-                set {_args} to Array.newInstance(Object.class, 2, (size of exprs-1))
-                Array.set({_args}, 0, [exprs-1])
+                set {_args} to Array.newInstance(Object.class, 2, 1)
+                Array.set({_args}, 0, [expr-1])
                 Array.set({_args}, 1, [false])
 
                 set {_result} to {_handler}.execute({_args})[0]
             else:
-                run section {_handler} with exprs-1, false and store the result in {_result}
+                run section {_handler} with expr-1, false and store the result in {_result}
             return {_result} if {_result} is set
 
         return
