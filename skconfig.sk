@@ -88,7 +88,9 @@ local expression (parsed|deseriali(s|z)ed) config value %string% [(with|using) [
                 Array.set({_args}, 1, [true])
 
                 set {_result} to {_handler}.execute({_args})[0]
+                {_handler}.resetReturnValue()
             else:
+                clear {_result}
                 run section {_handler} with expr-1, true and store the result in {_result}
             return {_result} if {_result} is set
 
@@ -120,7 +122,9 @@ local expression seriali(s|z)ed config value %object% [(with|using) [value] hand
                 Array.set({_args}, 1, [false])
 
                 set {_result} to {_handler}.execute({_args})[0]
+                {_handler}.resetReturnValue()
             else:
+                clear {_result}
                 run section {_handler} with expr-1, false and store the result in {_result}
             return {_result} if {_result} is set
 
